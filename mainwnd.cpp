@@ -25,44 +25,47 @@ void MainWnd::safeSliderValueSet(int value){
 void MainWnd::initEverything(){
     if(!deviceWrapper.device.get())
         return;
+    setEnabledUi(false);
     openni::Status lastStatus = openni::Status::STATUS_OK;
     try{
         lastStatus = deviceWrapper.depthStream->create(*deviceWrapper.device, openni::SENSOR_DEPTH);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("depthStream was not created: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("depthStream was not created: " + q_enum_name(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.depthStream->start();
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("depthStream didn't start: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("depthStream didn't start: " + q_enum_name(lastStatus));
             return;
         }
     }
     catch(...){
-        fastAlert("depthStream failed starting: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+        fastAlert("depthStream failed starting: " + q_enum_name(lastStatus));
     }
     try {
         lastStatus = deviceWrapper.device->setImageRegistrationMode(openni::IMAGE_REGISTRATION_DEPTH_TO_COLOR);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream setImageRegistrationMode: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream setImageRegistrationMode: " + q_enum_name(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.colorStream->create(*deviceWrapper.device, openni::SENSOR_COLOR);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream was not created: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream was not created: " + q_enum_name(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.colorStream->start();
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream didn't start: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream didn't start: " + q_enum_name(lastStatus));
             return;
         }
     }
     catch (...) {
-        fastAlert("colorStream failed starting: " + q_enum_name<decltype(lastStatus)>(lastStatus));
+        fastAlert("colorStream failed starting: " + q_enum_name(lastStatus));
     }
 
     deviceWrapper.updateInfo();
+
+    std::cout << deviceWrapper.lastFrameInStreams << std::endl;
 
     ui->time_slider->setMinimum(0);
     safeSliderValueSet(0);
@@ -70,7 +73,7 @@ void MainWnd::initEverything(){
     ui->left_label->setText("Wait a moment...");
 
     if(!repeater.get()){
-        repeater.reset(new Repeater([this](){
+        repeater.reset(new EffectiveRepeater([this](){
             if(deviceWrapper.lastFrameInStreams<0)
                 return;//if nothing to render -> exit
 
@@ -140,11 +143,13 @@ void MainWnd::restartPlaybackFromFrame(int64_t frame){
     restartPlaybackFromPos(float_t(frame)/deviceWrapper.lastFrameInStreams);
 }
 
-//now bufferless->slower (much slower)
+//now bufferless and therefore slower (much slower)
+
+//why second recording isn't working
 void MainWnd::setFrameByPosition(float_t pos){
     size_t destFrame = size_t(deviceWrapper.lastFrameInStreams*pos);
 
-    if(pos>1.f)
+    if(pos>1.f || pos<0)
         return;
 
     leftScene->removeItem(previousLeftPixmap.get());
