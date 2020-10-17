@@ -1,10 +1,14 @@
 #include "mainwnd.h"
 #include "ui_mainwnd.h"
 
-//for error alerts
 template<typename en>
-QString enum_name(en enum_value){
-    return QString::fromStdString(std::string(magic_enum::enum_name<en>(enum_value)));
+std::string enum_name(en enum_value){
+    return std::string(magic_enum::enum_name<en>(enum_value));
+}
+
+template<typename en>
+QString q_enum_name(en enum_value){
+    return QString::fromStdString(enum_name(enum_value));
 }
 
 void MainWnd::fastAlert(const QString& str) {
@@ -18,68 +22,56 @@ void MainWnd::safeSliderValueSet(int value){
     ui->time_slider->blockSignals(false);
 }
 
-//all-in-one
 void MainWnd::initEverything(){
-    if(!deviceWrapper.device)
+    if(!deviceWrapper.device.get())
         return;
     openni::Status lastStatus = openni::Status::STATUS_OK;
     try{
         lastStatus = deviceWrapper.depthStream->create(*deviceWrapper.device, openni::SENSOR_DEPTH);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("depthStream was not created: " + enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("depthStream was not created: " + q_enum_name<decltype(lastStatus)>(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.depthStream->start();
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("depthStream didn't start: " + enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("depthStream didn't start: " + q_enum_name<decltype(lastStatus)>(lastStatus));
             return;
         }
     }
     catch(...){
-        fastAlert("depthStream failed starting: " + enum_name<decltype(lastStatus)>(lastStatus));
+        fastAlert("depthStream failed starting: " + q_enum_name<decltype(lastStatus)>(lastStatus));
     }
     try {
         lastStatus = deviceWrapper.device->setImageRegistrationMode(openni::IMAGE_REGISTRATION_DEPTH_TO_COLOR);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream setImageRegistrationMode: " + enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream setImageRegistrationMode: " + q_enum_name<decltype(lastStatus)>(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.colorStream->create(*deviceWrapper.device, openni::SENSOR_COLOR);
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream was not created: " + enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream was not created: " + q_enum_name<decltype(lastStatus)>(lastStatus));
             return;
         }
         lastStatus = deviceWrapper.colorStream->start();
         if(lastStatus != openni::Status::STATUS_OK){
-            fastAlert("colorStream didn't start: " + enum_name<decltype(lastStatus)>(lastStatus));
+            fastAlert("colorStream didn't start: " + q_enum_name<decltype(lastStatus)>(lastStatus));
             return;
         }
     }
     catch (...) {
-        fastAlert("colorStream failed starting: " + enum_name<decltype(lastStatus)>(lastStatus));
+        fastAlert("colorStream failed starting: " + q_enum_name<decltype(lastStatus)>(lastStatus));
     }
 
-    // here i could seek through videostream, caching frames on a fly etc. Yet, it was not really possible
-    std::thread th([this](){
-        auto ans = deviceWrapper.prepareQPixmaps();
-        if(ans != deviceVStreamInfo::RefillingStatus::OK){
-            deviceWrapper.lastReadyFrame = -1;
-        }
-    });
-    th.detach();
-
-    //checking if first frame is ready
-    deviceWrapper.firstFrameReady.lock();
-    deviceWrapper.firstFrameReady.unlock();
+    deviceWrapper.updateInfo();
 
     ui->time_slider->setMinimum(0);
     safeSliderValueSet(0);
 
-    ui->left_label->setText("Loading...");
+    ui->left_label->setText("Wait a moment...");
 
-    if(!repeater){
-        repeater = new Repeater([this](){
-            if(deviceWrapper.lastReadyFrame<0)
+    if(!repeater.get()){
+        repeater.reset(new Repeater([this](){
+            if(deviceWrapper.lastFrameInStreams<0)
                 return;//if nothing to render -> exit
 
             if(deviceWrapper.readyForUsage){
@@ -87,14 +79,14 @@ void MainWnd::initEverything(){
                     ui->left_label->setText("ONI Loaded...");
 
                     safeSliderValueSet(0);
-                    ui->time_slider->setMaximum(deviceWrapper.lastReadyFrame);
+                    ui->time_slider->setMaximum(deviceWrapper.lastFrameInStreams);
                     restartPlaybackFromPos(0);
 
                     setEnabledUi(true);
                 }
             }
             else{
-                ui->left_label->setText("Loading... "+QString::number(float_t(deviceWrapper.lastReadyFrame*100)/deviceWrapper.depthPixmaps.size())+"%");
+                ui->left_label->setText("Wait a moment... ");
                 return;
             }
 
@@ -107,24 +99,24 @@ void MainWnd::initEverything(){
             else
                 frameNo = nextFrame;
 
-            if(!playbackEnabled && (frameNo == currentFrame || frameNo < 0 || frameNo > deviceWrapper.lastReadyFrame)){
+            if(!playbackEnabled && (frameNo == currentFrame || frameNo < 0 || frameNo > deviceWrapper.lastFrameInStreams)){
                 nextFrame = currentFrame;
                 return;
             }
 
-            if(playbackEnabled && frameNo > deviceWrapper.lastReadyFrame){
-                frameNo = deviceWrapper.lastReadyFrame;
+            if(playbackEnabled && frameNo > deviceWrapper.lastFrameInStreams){
+                frameNo = deviceWrapper.lastFrameInStreams;
                 playbackEnabled = false;
             }
 
             currentFrame = frameNo;
             ui->right_label->setText(buildTimeString(currentFrame/deviceWrapper.FPS)+QString(" (F%1)").arg(currentFrame));
 
-            float_t framePos = float_t(frameNo)/deviceWrapper.lastReadyFrame;
+            float_t framePos = float_t(frameNo)/deviceWrapper.lastFrameInStreams;
             safeSliderValueSet(framePos*ui->time_slider->maximum());
 
             setFrameByPosition(framePos);
-        },33);
+        },33));
     }
 }
 
@@ -133,37 +125,60 @@ QString MainWnd::buildTimeString(int64_t seconds){
     auto sec = seconds%60;
     auto min = (seconds%3600)/60;
     auto hr = seconds/3600;
-    return (((hr<=9?zero:empty))+QString::number(hr)+":"+
-            ((min<=9?zero:empty))+QString::number(min)+":"+
-            ((sec<=9?zero:empty))+QString::number(sec));
+    return (((hr<10?zero:empty))+QString::number(hr)+":"+
+            ((min<10?zero:empty))+QString::number(min)+":"+
+            ((sec<10?zero:empty))+QString::number(sec));
 }
 
 void MainWnd::restartPlaybackFromPos(float_t pos){
-    playbackStartTime->second = deviceWrapper.lastReadyFrame*pos;
+    playbackStartTime->second = deviceWrapper.lastFrameInStreams*pos;
     playbackStartTime->first = std::chrono::steady_clock::now();
     playbackEnabled = true;
 }
 
 void MainWnd::restartPlaybackFromFrame(int64_t frame){
-    restartPlaybackFromPos(float_t(frame)/deviceWrapper.lastReadyFrame);
+    restartPlaybackFromPos(float_t(frame)/deviceWrapper.lastFrameInStreams);
 }
 
+//now bufferless->slower (much slower)
 void MainWnd::setFrameByPosition(float_t pos){
-    auto destFrame = size_t(deviceWrapper.lastReadyFrame*pos);
+    size_t destFrame = size_t(deviceWrapper.lastFrameInStreams*pos);
 
-    leftScene->removeItem(previousLeftPixmap);
-    rightScene->removeItem(previousRightPixmap);
+    if(pos>1.f)
+        return;
 
-    leftScene->addItem(previousLeftPixmap = deviceWrapper.colorPixmaps[destFrame]);
-    rightScene->addItem(previousRightPixmap = deviceWrapper.depthPixmaps[destFrame]);
+    leftScene->removeItem(previousLeftPixmap.get());
+    rightScene->removeItem(previousRightPixmap.get());
 
-    ui->left_gview->fitInView(previousLeftPixmap,Qt::KeepAspectRatio);
-    ui->right_gview->fitInView(previousRightPixmap,Qt::KeepAspectRatio);
+    auto seekColorFrameRes = deviceWrapper.getPlaybackControl()->seek(*deviceWrapper.colorStream,destFrame);
+    auto seekDepthFrameRes = deviceWrapper.getPlaybackControl()->seek(*deviceWrapper.depthStream,destFrame);
+
+    if(seekDepthFrameRes!=seekColorFrameRes && seekColorFrameRes != openni::STATUS_OK){
+        fastAlert("Seek failure.");
+        return;
+    }
+
+    auto depthReadStatus = deviceWrapper.depthStream->readFrame(&deviceWrapper.depthFrame);
+    auto colorReadStatus = deviceWrapper.colorStream->readFrame(&deviceWrapper.colorFrame);
+
+    if(depthReadStatus != colorReadStatus && colorReadStatus != openni::STATUS_OK){
+        fastAlert("Frame reading failure.");
+        return;
+    }
+
+    previousLeftPixmap.reset(deviceWrapper.createColorPixMapFromFrame(deviceWrapper.colorFrame));
+    previousRightPixmap.reset(deviceWrapper.createDepthPixMapFromFrame(deviceWrapper.depthFrame));
+
+    leftScene->addItem(previousLeftPixmap.get());
+    rightScene->addItem(previousRightPixmap.get());
+
+    ui->left_gview->fitInView(previousLeftPixmap.get(),Qt::KeepAspectRatio);
+    ui->right_gview->fitInView(previousRightPixmap.get(),Qt::KeepAspectRatio);
 
     if(firstRun){
         firstRun = false;
-        ui->left_gview->setScene(leftScene);
-        ui->right_gview->setScene(rightScene);
+        ui->left_gview->setScene(leftScene.get());
+        ui->right_gview->setScene(rightScene.get());
     }
 }
 
@@ -195,13 +210,13 @@ void MainWnd::LastFrame(){
     if(playbackEnabled)
         restartPlaybackFromPos(1);
     else
-        nextFrame = deviceWrapper.lastReadyFrame;
+        nextFrame = deviceWrapper.lastFrameInStreams;
 }
 
 void MainWnd::SliderMove(int value){
     if(playbackEnabled)
         restartPlaybackFromPos(float_t(value)/ui->time_slider->maximum());
-    nextFrame = (value*deviceWrapper.lastReadyFrame)/ui->time_slider->maximum();
+    nextFrame = (value*deviceWrapper.lastFrameInStreams)/ui->time_slider->maximum();
 }
 
 void MainWnd::reinititialiseComponents(){
@@ -216,18 +231,11 @@ void MainWnd::reinititialiseComponents(){
     for(auto& i: rightSceneItems)
         rightScene->removeItem(i);
 
-    previousLeftPixmap = nullptr;
-    previousRightPixmap = nullptr;
+    previousLeftPixmap.reset(new QGraphicsPixmapItem);
+    previousRightPixmap.reset(new QGraphicsPixmapItem);
 }
 
 void MainWnd::openFile() {
-    bool lockObtained = deviceWrapper.fileProcessing.try_lock();
-    if(!lockObtained){
-        fastAlert("File is in the process of loading...");
-        return;
-    }
-    else
-        deviceWrapper.fileProcessing.unlock();
     QFileDialog dialog(this);
     dialog.setFileMode(QFileDialog::ExistingFile);
     dialog.setNameFilter(tr("ONI Files (*.oni)"));
@@ -236,17 +244,16 @@ void MainWnd::openFile() {
         auto fileNames = dialog.selectedFiles();
         auto firstFile = fileNames.front();
         auto filename = (firstFile).toUtf8();
-        auto devicePtr = new openni::Device();
+        auto devicePtr = std::unique_ptr<openni::Device>(new openni::Device());
         auto openStatus = devicePtr->open(filename.constData());
         if(openStatus!=openni::STATUS_OK){
-            fastAlert("Device failed to open: " + enum_name<openni::Status>(openStatus));
-            delete devicePtr;
+            fastAlert("Device failed to open: " + q_enum_name<openni::Status>(openStatus));
+            devicePtr.reset();
             return;
         }
         reinititialiseComponents();
         deviceWrapper.clearAll();
-        deviceWrapper.device = devicePtr;
-        deviceWrapper.playbackControl = deviceWrapper.device->getPlaybackControl();
+        deviceWrapper.device.swap(devicePtr);
         initEverything();
     }
     else{
@@ -270,13 +277,12 @@ void MainWnd::setEnabledUi(bool enable){
 
 MainWnd::MainWnd(QWidget *parent) :
     QMainWindow(parent),
-    repeater(nullptr),
     leftScene(new QGraphicsScene(this)),
     rightScene(new QGraphicsScene(this)),
     ui(new Ui::MainWnd),
     msgBox(new QMessageBox(this)),
-    previousLeftPixmap(nullptr),
-    previousRightPixmap(nullptr),
+    previousLeftPixmap(new QGraphicsPixmapItem),
+    previousRightPixmap(new QGraphicsPixmapItem),
     playbackStartTime(new time_frame_pair({std::chrono::steady_clock::now(),0})),
     currentFrame(0), nextFrame(0),
     playbackEnabled(false), firstRun(true) {

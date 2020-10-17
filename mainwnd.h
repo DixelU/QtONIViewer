@@ -49,16 +49,16 @@ private slots:
     void LastFrame();
     void SliderMove(int value);
 private:
-    Repeater* repeater;
-    QGraphicsScene* leftScene;
-    QGraphicsScene* rightScene;
-    Ui::MainWnd *ui;
-    QMessageBox *msgBox;
+    std::unique_ptr<Repeater> repeater;
+    std::unique_ptr<QGraphicsScene> leftScene;
+    std::unique_ptr<QGraphicsScene> rightScene;
+    std::unique_ptr<Ui::MainWnd> ui;
+    std::unique_ptr<QMessageBox> msgBox;
     deviceVStreamInfo deviceWrapper;
-    QGraphicsPixmapItem* previousLeftPixmap;
-    QGraphicsPixmapItem* previousRightPixmap;
+    std::unique_ptr<QGraphicsPixmapItem> previousLeftPixmap;
+    std::unique_ptr<QGraphicsPixmapItem> previousRightPixmap;
 
-    time_frame_pair* playbackStartTime;
+    std::unique_ptr<time_frame_pair> playbackStartTime;
     int64_t currentFrame;
     int64_t nextFrame;
     bool playbackEnabled, firstRun;

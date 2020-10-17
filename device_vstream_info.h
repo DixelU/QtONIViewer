@@ -13,7 +13,10 @@
 
 #include "Include/OpenNI.h"
 
-//if there could be more time, i'd prefer a different approach
+#include <QWidget>
+#include <QImage>
+#include <QPainter>
+
 struct deviceVStreamInfo{
     enum class RefillingStatus{
         OK,
@@ -21,76 +24,38 @@ struct deviceVStreamInfo{
         NO_VALID_STREAMS,
         FRAME_READING_FAILURE
     };
-    openni::Device *device;
-    openni::PlaybackControl *playbackControl;
-    openni::VideoStream *depthStream;
-    openni::VideoStream *colorStream;
-    std::vector<QGraphicsPixmapItem*> depthPixmaps;
-    std::vector<QGraphicsPixmapItem*> colorPixmaps;
+    std::unique_ptr<openni::Device> device;
+    std::unique_ptr<openni::VideoStream> depthStream;
+    std::unique_ptr<openni::VideoStream> colorStream;
+    openni::VideoFrameRef depthFrame, colorFrame;
     int64_t FPS;
-    int64_t lastReadyFrame;
+    int64_t lastFrameInStreams;
     bool readyForUsage;
-    QMutex fileProcessing;
-    QMutex firstFrameReady;
     deviceVStreamInfo():
-        device(nullptr), playbackControl(nullptr),
         depthStream(new openni::VideoStream),
         colorStream(new openni::VideoStream),
-        FPS(0), lastReadyFrame(-1), readyForUsage(false)
+        FPS(0), lastFrameInStreams(-1), readyForUsage(false)
     {}
     ~deviceVStreamInfo(){
         clearAll(true);
     }
-    RefillingStatus prepareQPixmaps(){
-        if(!device || !playbackControl)
+    RefillingStatus updateInfo(){
+        if(!device.get())
             return RefillingStatus::NULL_POINTERS;
-        if(!depthStream || !colorStream)
+        if(!depthStream.get() || !colorStream.get())
             return RefillingStatus::NULL_POINTERS;
         if(!depthStream->isValid() || !colorStream->isValid())
             return RefillingStatus::NO_VALID_STREAMS;
-        openni::VideoFrameRef depthFrame, colorFrame;
-        firstFrameReady.lock();
-        fileProcessing.lock();
-
-        size_t depthFramesCount = playbackControl->getNumberOfFrames(*depthStream);
-        size_t colorFramesCount = playbackControl->getNumberOfFrames(*colorStream);
-        size_t frames_count = min(depthFramesCount,colorFramesCount);
+        size_t depthFramesCount = getPlaybackControl()->getNumberOfFrames(*depthStream);
+        size_t colorFramesCount = getPlaybackControl()->getNumberOfFrames(*colorStream);
+        lastFrameInStreams =  min(depthFramesCount,colorFramesCount) - 1;
         FPS = colorStream->getVideoMode().getFps();
-
-        depthPixmaps.resize(frames_count,nullptr);
-        colorPixmaps.resize(frames_count,nullptr);
-
-        for(size_t curFrameIndex=0;curFrameIndex<frames_count;curFrameIndex++){
-            auto depth_read_status = depthStream->readFrame(&depthFrame);
-            auto color_read_status = colorStream->readFrame(&colorFrame);
-
-            if(depth_read_status != color_read_status && color_read_status != openni::STATUS_OK){
-                depthPixmaps.resize(curFrameIndex);
-                colorPixmaps.resize(curFrameIndex);
-                fileProcessing.unlock();
-                return RefillingStatus::FRAME_READING_FAILURE;
-            }
-            if(!curFrameIndex)
-                firstFrameReady.unlock();
-
-            colorPixmaps[curFrameIndex] = (createColorPixMapFromFrame(colorFrame));
-            depthPixmaps[curFrameIndex] = (createDepthPixMapFromFrame(depthFrame));
-
-            lastReadyFrame = curFrameIndex;
-        }
-        readyForUsage = frames_count > 0;
-        fileProcessing.unlock();
+        readyForUsage = true;
         return RefillingStatus::OK;
     }
     void clearFrameBuffer(){
-        lastReadyFrame = -1;
+        lastFrameInStreams = -1;
         readyForUsage = false;
-        for(auto& frame: depthPixmaps)
-            delete frame;
-        for(auto& frame: colorPixmaps)
-            delete frame;
-        colorPixmaps.clear();
-        depthPixmaps.clear();
     }
     void clearAll(bool isDestruction=false){
         clearFrameBuffer();
@@ -103,21 +68,21 @@ struct deviceVStreamInfo{
             depthStream->destroy();
         }
         if(device){
-            playbackControl = nullptr;
             device->close();
-            delete device;
+            device.reset();
         }
-        delete colorStream;
-        delete depthStream;
+        colorStream.reset();
+        depthStream.reset();
         if(!isDestruction){
             FPS = 0;
-            lastReadyFrame = -1;
-            depthStream = new openni::VideoStream;
-            colorStream = new openni::VideoStream;
+            lastFrameInStreams = -1;
+            depthStream.reset(new openni::VideoStream);
+            colorStream.reset(new openni::VideoStream);
             readyForUsage = false;
-            device = nullptr;
-            playbackControl = nullptr;
         }
+    }
+    inline openni::PlaybackControl* getPlaybackControl(){
+        return device->getPlaybackControl();
     }
     inline QGraphicsPixmapItem* createColorPixMapFromFrame(openni::VideoFrameRef& frame){
         auto newPixmapItem = new QGraphicsPixmapItem();
