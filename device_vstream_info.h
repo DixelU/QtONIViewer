@@ -31,6 +31,7 @@ struct deviceVStreamInfo{
     int64_t FPS;
     int64_t lastFrameInStreams;
     bool readyForUsage;
+    QMutex mutex;
     deviceVStreamInfo():
         depthStream(new openni::VideoStream),
         colorStream(new openni::VideoStream),

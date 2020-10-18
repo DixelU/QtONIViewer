@@ -65,21 +65,18 @@ void MainWnd::initEverything(){
 
     deviceWrapper.updateInfo();
 
-    std::cout << deviceWrapper.lastFrameInStreams << std::endl;
-
     ui->time_slider->setMinimum(0);
     safeSliderValueSet(0);
 
     ui->left_label->setText("Wait a moment...");
 
     if(!repeater.get()){
-        repeater.reset(new EffectiveRepeater([this](){
+        repeater.reset(new EffectiveRepeater([this]()->void{
             if(deviceWrapper.lastFrameInStreams<0)
                 return;//if nothing to render -> exit
 
             if(deviceWrapper.readyForUsage){
                 if(!ui->butt_frame->isEnabled()){
-                    ui->left_label->setText("ONI Loaded...");
 
                     safeSliderValueSet(0);
                     ui->time_slider->setMaximum(deviceWrapper.lastFrameInStreams);
@@ -93,6 +90,9 @@ void MainWnd::initEverything(){
                 return;
             }
 
+            mutex.lock();
+            ui->left_label->setText(QString::number(int(1000/repeater->getPeriod())) + " FPS");
+
             auto now = std::chrono::steady_clock::now();
             auto timeSincePlaybackStart = std::chrono::duration_cast<std::chrono::milliseconds>(now - playbackStartTime->first).count();
             int64_t frameNo = 0;
@@ -104,6 +104,7 @@ void MainWnd::initEverything(){
 
             if(!playbackEnabled && (frameNo == currentFrame || frameNo < 0 || frameNo > deviceWrapper.lastFrameInStreams)){
                 nextFrame = currentFrame;
+                mutex.unlock();
                 return;
             }
 
@@ -119,7 +120,9 @@ void MainWnd::initEverything(){
             safeSliderValueSet(framePos*ui->time_slider->maximum());
 
             setFrameByPosition(framePos);
-        },33));
+            mutex.unlock();
+        },33,1));
+        repeater->setDelayedStart();
     }
 }
 
@@ -143,16 +146,13 @@ void MainWnd::restartPlaybackFromFrame(int64_t frame){
     restartPlaybackFromPos(float_t(frame)/deviceWrapper.lastFrameInStreams);
 }
 
-//now bufferless and therefore slower (much slower)
-
-//why second recording isn't working
 void MainWnd::setFrameByPosition(float_t pos){
     size_t destFrame = size_t(deviceWrapper.lastFrameInStreams*pos);
 
-    if(pos>1.f || pos<0)
+    if(pos>1.f || pos<0){
+        mutex.unlock();
         return;
-
-    mutex.lock();
+    }
 
     leftScene->removeItem(previousLeftPixmap.get());
     rightScene->removeItem(previousRightPixmap.get());
@@ -189,7 +189,6 @@ void MainWnd::setFrameByPosition(float_t pos){
         ui->left_gview->setScene(leftScene.get());
         ui->right_gview->setScene(rightScene.get());
     }
-    mutex.unlock();
 }
 
 void MainWnd::Play(){
