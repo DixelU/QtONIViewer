@@ -152,6 +152,8 @@ void MainWnd::setFrameByPosition(float_t pos){
     if(pos>1.f || pos<0)
         return;
 
+    mutex.lock();
+
     leftScene->removeItem(previousLeftPixmap.get());
     rightScene->removeItem(previousRightPixmap.get());
 
@@ -160,6 +162,7 @@ void MainWnd::setFrameByPosition(float_t pos){
 
     if(seekDepthFrameRes!=seekColorFrameRes && seekColorFrameRes != openni::STATUS_OK){
         fastAlert("Seek failure.");
+        mutex.unlock();
         return;
     }
 
@@ -168,6 +171,7 @@ void MainWnd::setFrameByPosition(float_t pos){
 
     if(depthReadStatus != colorReadStatus && colorReadStatus != openni::STATUS_OK){
         fastAlert("Frame reading failure.");
+        mutex.unlock();
         return;
     }
 
@@ -185,6 +189,7 @@ void MainWnd::setFrameByPosition(float_t pos){
         ui->left_gview->setScene(leftScene.get());
         ui->right_gview->setScene(rightScene.get());
     }
+    mutex.unlock();
 }
 
 void MainWnd::Play(){
