@@ -1,6 +1,14 @@
 #include "mainwnd.h"
 #include "ui_mainwnd.h"
 
+/*
+ * Note: i've experienced something like this -> https://github.com/occipital/OpenNI2/pull/25
+ * Even though it's very old and is closed, from time to time seek-ing fails for some reason
+ * Needs further digging (in sources probably)
+ *
+ * might be also result of a poor design or set-up of deviceWrapper.
+*/
+
 template<typename en>
 std::string enum_name(en enum_value){
     return std::string(magic_enum::enum_name<en>(enum_value));
@@ -197,24 +205,29 @@ void MainWnd::Play(){
         sliderPos = 0;
     restartPlaybackFromPos(sliderPos);
 }
+
 void MainWnd::Pause(){
     playbackEnabled = false;
     nextFrame = currentFrame;
 }
+
 void MainWnd::OneFrameForward(){
     playbackEnabled = false;
     nextFrame = currentFrame + 1;
 }
+
 void MainWnd::OneFrameBackward(){
     playbackEnabled = false;
     nextFrame = currentFrame - 1;
 }
+
 void MainWnd::FirstFrame(){
     if(playbackEnabled)
         restartPlaybackFromPos(0);
     else
         nextFrame = 0;
 }
+
 void MainWnd::LastFrame(){
     if(playbackEnabled)
         restartPlaybackFromPos(1);
